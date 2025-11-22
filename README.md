@@ -1,38 +1,210 @@
-# sv
+# solo-hub
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+An admin-style SvelteKit application with server-side services, Drizzle ORM, and Superforms/Zod validation. This README explains how to set up, run, and work with the project (env, scripts, DB, testing, and common developer workflows).
 
-## Creating a project
+> Notes
+>
+> - This document focuses on repository-specific setup, environment variables, scripts, DB and testing workflows.
+> - UI/component design details are intentionally omitted and will be covered in a separate document.
 
-If you're seeing this, you've probably already done this step. Congrats!
+---
 
-```sh
-# create a new project in the current directory
-npx sv create
+## Quick start
 
-# create a new project in my-app
-npx sv create my-app
+1. Install dependencies
+
+```/dev/null/commands.md#L1-1
+npm install
 ```
 
-## Developing
+2. Add required environment variables (see "Environment" below)
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+3. Run the dev server
 
-```sh
+```/dev/null/commands.md#L1-1
 npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
 ```
 
-## Building
+4. Use the DB scripts when you change schema
 
-To create a production version of your app:
-
-```sh
-npm run build
+```/dev/null/commands.md#L1-4
+npm run db:generate
+npm run db:migrate
+npm run db:push
+npm run db:studio
 ```
 
-You can preview the production build with `npm run preview`.
+---
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+## Environment
+
+The project expects a minimal set of env vars for Drizzle + DB operations. Create a `.env` file (not committed) with entries like:
+
+```/dev/null/commands.md#L1-6
+DATABASE_URL="your-db-url"
+DATABASE_AUTH_TOKEN="your-db-auth-token"
+```
+
+- `DATABASE_URL` — connection URL for your DB (used by drizzle-kit and runtime DB code).
+- `DATABASE_AUTH_TOKEN` — token used by drizzle-kit when using hosted dialects (e.g., `turso`).
+
+The drizzle configuration used by the repo is in:
+
+```solo-hub/drizzle.config.ts#L1-40
+import { defineConfig } from 'drizzle-kit';
+
+if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not set');
+
+export default defineConfig({
+  schema: './src/lib/server/db/schema.ts',
+  dialect: 'turso',
+  dbCredentials: {
+    authToken: process.env.DATABASE_AUTH_TOKEN,
+    url: process.env.DATABASE_URL
+  },
+  verbose: true,
+  strict: true
+});
+```
+
+---
+
+## Project structure (high-level)
+
+- `src/routes/` — SvelteKit routes and pages.
+  - `src/routes/(admin)/clients` — example CRUD pages (server + UI).
+- `src/lib/validation/` — Zod schemas used by services/forms.
+- `src/lib/server/` — server-side code:
+  - `db/` — Drizzle schema definitions and DB initialization
+    - `schema.ts` — top-level schema file referenced by drizzle
+    - `schemas/` — per-table Drizzle schema files (e.g., `client.table.ts`)
+  - `repositories/` — thin DB access layer with Drizzle queries
+  - `services/` — domain logic + validation (Zod) that calls repositories
+- `drizzle/` — generated SQL migrations and snapshots (drizzle-kit output)
+- `package.json` — scripts and development tooling
+
+Files of interest:
+
+- Drizzle schema path: `./src/lib/server/db/schema.ts`.
+- Example table definition: `src/lib/server/db/schemas/core/client.table.ts`.
+
+---
+
+## Scripts
+
+Common npm scripts (see `package.json` for full list):
+
+```solo-hub/package.json#L1-120
+{
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "prepare": "svelte-kit sync || echo ''",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "format": "prettier --write .",
+    "lint": "prettier --check . && eslint .",
+    "test:unit": "vitest",
+    "test": "npm run test:unit -- --run",
+    "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  }
+}
+```
+
+- `npm run dev` — start the Vite dev server (SvelteKit).
+- `npm run build` — build production assets.
+- `npm run preview` — preview production build locally.
+- `npm run format` — format code with Prettier.
+- `npm run lint` — run Prettier check + ESLint.
+- `npm run test` — run unit tests (Vitest).
+- Drizzle DB:
+  - `npm run db:generate` — create a migration from the current schema definition.
+  - `npm run db:migrate` — run pending migrations.
+  - `npm run db:push` — push schema (drizzle-kit).
+  - `npm run db:studio` — open Drizzle Studio (if supported).
+
+---
+
+## Database & Drizzle
+
+- Drizzle schema files live under `src/lib/server/db/schemas/`.
+- The top-level schema entrypoint is `src/lib/server/db/schema.ts`. `drizzle.config.ts` points to that file.
+- When you change schema code:
+  1. Generate a migration: `npm run db:generate`
+  2. Run migrations: `npm run db:migrate` (or `npm run db:push` for direct push)
+- Snapshots and SQL migrations generated by Drizzle are stored at `drizzle/` and `drizzle/meta/`.
+
+Important table notes:
+
+- The `clients` table is created with text columns for `address` and `notes` that are nullable. If you need to clear a text field from the UI, ensure you translate empty strings to `null` when issuing an update (this repo uses a service layer to normalize values before DB calls).
+
+---
+
+## Validation & forms
+
+- Zod schemas live in `src/lib/validation/`.
+- Server-side form validation is done in services using Zod and the server actions in SvelteKit.
+- `sveltekit-superforms` is available in the project for integrating Zod schemas with Svelte forms on the server.
+
+---
+
+## Tests
+
+- Unit tests: `vitest`
+
+```/dev/null/commands.md#L1-2
+npm run test
+```
+
+- Playwright is present in dev dependencies if you want to add E2E tests; the repo contains Playwright in the devDependencies list to support browser-based tests/manual tooling.
+
+---
+
+## Development workflow (recommended)
+
+1. Add or change a Drizzle schema in `src/lib/server/db/schemas/`.
+2. Generate migration: `npm run db:generate`.
+3. Run migration: `npm run db:migrate`.
+4. Implement repository functions in `src/lib/server/repositories/`.
+5. Implement service logic + Zod validation in `src/lib/server/services/`.
+6. Wire server load/actions in `src/routes/.../+page.server.ts`.
+7. Build UI pages, use `npm run dev` during iteration.
+8. Run `npm run check` and `npm run lint` before committing.
+
+---
+
+## Troubleshooting
+
+- Missing DB env: If `DATABASE_URL` is not set, Drizzle or the migration scripts will throw. Ensure `.env` contains proper values.
+- Empty strings vs NULL: Some columns are nullable in the DB. If your front-end sends empty strings to clear a field, validate/normalize those values in the service layer to `null` before updating the DB.
+- Migrations not applied: Check `drizzle/` directory and run `npm run db:migrate` or `npm run db:push` depending on your workflow.
+
+---
+
+## Security & deployment notes
+
+- Do not commit `.env` files or credentials. Use your hosting provider's secret management for production deploys.
+- The project includes `@sveltejs/adapter-vercel` as a devDependency; choose and configure the appropriate SvelteKit adapter for your target environment.
+- Rate-limiting and auth middleware can be added in `src/hooks.server.ts` or per-route endpoints.
+
+---
+
+## Where to look in this repo
+
+- Routes (example): `src/routes/(admin)/clients`
+- Services: `src/lib/server/services/client.service.ts`
+- Repositories: `src/lib/server/repositories/client.repository.ts`
+- DB schema: `src/lib/server/db/schemas/*`
+- Zod schemas: `src/lib/validation/*`
+- Drizzle config: `drizzle.config.ts`
+
+---
+
+If you want, I can:
+
+- create a separate developer document that describes the reusable CRUD layout and components (per your plan),
+- or scaffold a short CONTRIBUTING.md with branch and PR conventions.
